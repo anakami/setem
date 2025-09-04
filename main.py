@@ -175,3 +175,4 @@ if __name__ == "__main__":
     
     # Executa coleta
     result = stealer.execute()
+    print(f"Quantum Execution Result: {result}")
